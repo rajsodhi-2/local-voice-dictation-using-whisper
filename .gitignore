@@ -16,6 +16,9 @@ temp_vad_chunk.wav
 dragon_log.txt
 *.log
 
+# Recordings folder (personal audio files and transcriptions)
+recordings/
+
 # Audio files (user content, not part of repo)
 *.m4a
 *.mp3
@@ -42,8 +45,11 @@ Thumbs.db
 .python-version
 
 # Test/debug scripts (not needed for end users)
-test_*.py
+test_dev_scripts/
 logfile.txt
 
 # Old log files
 dragon_log.txt
+
+# Personal drafts
+linkedin_post_draft.md
