@@ -1,0 +1,49 @@
+# Virtual environment
+whisperenv/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+# Temporary files
+temp_vad_chunk.wav
+*.tmp
+
+# Log files
+dragon_log.txt
+*.log
+
+# Audio files (user content, not part of repo)
+*.m4a
+*.mp3
+*.wav
+*.flac
+
+# Transcription outputs (generated files)
+*.srt
+*.vtt
+*.tsv
+
+# Jupyter notebook checkpoints
+.ipynb_checkpoints/
+
+# IDE
+.vscode/
+.idea/
+
+# OS files
+Thumbs.db
+.DS_Store
+
+# pyenv
+.python-version
+
+# Test/debug scripts (not needed for end users)
+test_*.py
+logfile.txt
+
+# Old log files
+dragon_log.txt

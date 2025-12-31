@@ -1,0 +1,58 @@
+# Whisper Audio Transcription Environment
+# Python 3.10.7 | CUDA 12.1 | RTX 3070 Ti
+
+# Core ML/AI
+torch==2.5.1+cu121
+--extra-index-url https://download.pytorch.org/whl/cu121
+
+# Whisper Speech-to-Text
+openai-whisper @ git+https://github.com/openai/whisper.git
+
+# Numerical Processing
+numpy==2.2.6
+numba==0.61.2
+llvmlite==0.44.0
+
+# Tokenization
+tiktoken==0.9.0
+regex==2024.11.6
+
+# Jupyter/IPython
+ipykernel==6.29.5
+ipython==8.37.0
+jupyter_client==8.6.3
+jupyter_core==5.8.1
+
+# Progress/Display
+tqdm==4.67.1
+colorama==0.4.6
+
+# Dragon-style dictation
+pynput==1.8.1              # Keyboard simulation (type into active window)
+webrtcvad-wheels==2.0.14   # Voice activity detection
+sounddevice==0.5.3         # Audio capture
+CFFI==2.0.0                # C Foreign Function Interface (sounddevice dep)
+
+# Networking
+requests==2.32.3
+urllib3==2.4.0
+certifi==2025.4.26
+
+# Templating (Whisper dependency)
+Jinja2==3.1.6
+MarkupSafe==3.0.2
+
+# Symbolic Math (PyTorch dependency)
+sympy==1.13.1
+mpmath==1.3.0
+
+# File/Network utilities
+filelock==3.18.0
+fsspec==2025.5.1
+networkx==3.4.2
+
+# Windows-specific
+pywin32==310
+
+# Character encoding
+charset-normalizer==3.4.2
