@@ -59,23 +59,40 @@ RTX 3070 Ti (8GB VRAM) can handle up to `large` model with some constraints.
 ## Project Structure
 ```
 Audio/
-├── CLAUDE.md               # This file
-├── requirements.txt        # Python dependencies
-├── .python-version         # pyenv version (3.10.7)
-├── whisperenv/                      # Virtual environment
+├── CLAUDE.md                         # This file
+├── README.md                         # User documentation
+├── requirements.txt                  # Python dependencies
+├── LICENSE                           # MIT license
+├── .gitignore                        # Git exclusions
+├── .python-version                   # pyenv version (3.10.7)
+├── whisperenv/                       # Virtual environment (not in repo)
+├── dragon_dictate.py                 # Real-time dictation application
 ├── audio_file_batch_transcribe.ipynb # Batch transcription notebook
-├── dragon_dictate.py       # Main Dragon clone application
-├── test_audio_input.py     # Audio input verification
-├── test_transcribe.py      # Single transcription test
-├── continuous_transcribe.py # Continuous transcription test
-├── test_components.py      # Component isolation tests
-├── test_keyboard.py        # Keyboard listener test
-├── test_app_launchers.py   # App path finder and launcher test
-├── dragon_log.txt          # Debug log output (when --log used)
-└── *.m4a, *.txt, etc.      # Audio files and transcriptions
+├── recordings/                       # Audio files and transcriptions (not in repo)
+│   └── *.m4a, *.wav, *.txt, etc.
+└── test_dev_scripts/                 # Development/test scripts (not in repo)
+    └── *.py
 ```
 
-## Dragon Clone - dragon_dictate.py
+## Batch Transcription - audio_file_batch_transcribe.ipynb
+
+Jupyter notebook for transcribing existing audio files (recordings, interviews, lectures).
+
+### Features
+- Single file or batch transcription
+- Supports .m4a, .mp3, .wav, .flac
+- Outputs .txt, .srt, .vtt, .tsv, .json
+- Skips already-transcribed files in batch mode
+- Configurable model size (tiny/base/small/medium/large)
+
+### Usage
+1. Open notebook in Jupyter
+2. Run cells in order
+3. Change `AUDIO_FILE` path to your file, or use batch mode for entire folder
+
+---
+
+## Real-Time Dictation - dragon_dictate.py
 
 A working Dragon NaturallySpeaking-style voice dictation system with command mode.
 
@@ -116,17 +133,50 @@ python dragon_dictate.py --log --logfile my_debug.txt
 ### Voice Commands
 
 **App Launchers (Ctrl + speak):**
+
+*Browsers:*
 | Command | Action |
 |---------|--------|
 | "open brave" | Launch Brave browser |
 | "open chrome" | Launch Chrome |
+| "open edge" | Launch Microsoft Edge |
+| "open firefox" | Launch Firefox |
+
+*Microsoft Office:*
+| Command | Action |
+|---------|--------|
 | "open word" | Launch Microsoft Word |
+| "open excel" | Launch Microsoft Excel |
 | "open powerpoint" | Launch PowerPoint |
-| "open notepad" | Launch Notepad++ |
+| "open onenote" | Launch OneNote |
+| "open teams" | Launch Microsoft Teams |
+
+*Dev Tools:*
+| Command | Action |
+|---------|--------|
 | "open vs code" | Launch VS Code |
-| "open terminal" | Open new PowerShell window |
-| "open explorer" | Open File Explorer |
+| "open notepad" | Launch Notepad++ |
 | "open claude" | Launch Claude desktop app |
+| "open terminal" | Open new PowerShell window |
+
+*System Utilities:*
+| Command | Action |
+|---------|--------|
+| "open explorer" | Open File Explorer |
+| "open calculator" | Open Calculator |
+| "open settings" | Open Windows Settings |
+| "open task manager" | Open Task Manager |
+| "open snipping tool" | Open Snipping Tool |
+
+*Communication:*
+| Command | Action |
+|---------|--------|
+| "open discord" | Launch Discord |
+| "open zoom" | Launch Zoom |
+
+*Media:*
+| Command | Action |
+|---------|--------|
 | "open ableton" | Launch Ableton Live |
 | "open youtube music" | Launch YouTube Music PWA |
 
@@ -191,12 +241,16 @@ WORD_REPLACEMENTS = {
 ```
 
 ### Known Command Aliases
-The system handles common mishearings:
+The system handles common mishearings and variations:
 - "safe" → "save"
 - "cloud" / "claud" / "clawed" → "claude"
 - "folder" / "files" → "explorer"
 - "closed tab" → "close tab"
 - "open tab" → "new tab"
+- "spreadsheet" → "excel"
+- "calc" → "calculator"
+- "snip" / "screenshot" → "snipping tool"
+- "mozilla" → "firefox"
 
 ### Sentence Continuation
 These words trigger continuation detection (removes previous period):
