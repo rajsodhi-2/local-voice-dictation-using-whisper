@@ -90,7 +90,8 @@ Your voice → Microphone → AI (Whisper) → Text → Types into active window
 - **OpenAI Whisper** - speech-to-text AI model
 - **PyTorch + CUDA** - runs the AI on the GPU
 - **webrtcvad** - detects when you're speaking vs. silent
-- **pynput** - simulates keyboard typing and listens for hotkeys
+- **keyboard** - listens for hotkeys (Pause key toggle, Ctrl for commands)
+- **pynput** - simulates keyboard typing into active window
 - **sounddevice** - captures audio from the microphone
 
 ---

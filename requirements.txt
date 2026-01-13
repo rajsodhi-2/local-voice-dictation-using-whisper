@@ -28,6 +28,7 @@ tqdm==4.67.1
 colorama==0.4.6
 
 # Dragon-style dictation
+keyboard==0.13.5           # Hotkey detection (Pause key, Ctrl key)
 pynput==1.8.1              # Keyboard simulation (type into active window)
 webrtcvad-wheels==2.0.14   # Voice activity detection
 sounddevice==0.5.3         # Audio capture
