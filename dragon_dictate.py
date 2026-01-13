@@ -22,8 +22,8 @@ import subprocess
 import argparse
 import datetime
 import webrtcvad
-from pynput.keyboard import Controller, Key, Listener
-from pynput import keyboard
+import keyboard as kb_hook  # For hotkey detection (more reliable than pynput on Windows)
+from pynput.keyboard import Controller, Key  # For typing output
 
 # ============================================================
 # COMMAND LINE ARGUMENTS
@@ -56,7 +56,7 @@ SAMPLE_RATE = 16000
 FRAME_DURATION_MS = 30
 FRAME_SIZE = int(SAMPLE_RATE * FRAME_DURATION_MS / 1000)
 VAD_AGGRESSIVENESS = 2  # Back to original
-SILENCE_FRAMES = 50  # ~1.5 seconds of silence before processing (was 30 = ~0.9s)
+SILENCE_FRAMES = 30  # ~0.9 seconds of silence before processing
 MIN_SPEECH_FRAMES = 10  # Back to original
 MAX_RECORDING_SECONDS = 30
 
@@ -430,7 +430,7 @@ def type_text(text, is_continuation=False):
 # ============================================================
 def record_with_vad():
     """Record audio, using VAD to detect speech boundaries."""
-    global listening, running, ctrl_held, last_record_heartbeat
+    global listening, running, last_record_heartbeat
 
     consecutive_errors = 0
     MAX_CONSECUTIVE_ERRORS = 5
@@ -492,7 +492,7 @@ def record_with_vad():
 
                 if frame_is_speech:
                     if not is_speech:
-                        was_command_mode = ctrl_held
+                        was_command_mode = is_ctrl_held()
                         if was_command_mode:
                             sys.stdout.write("[CMD] ")
 
@@ -628,50 +628,32 @@ def transcribe_worker():
         os.remove(temp_file)
 
 # ============================================================
-# HOTKEY HANDLER
+# HOTKEY HANDLER (using 'keyboard' library - more reliable on Windows)
 # ============================================================
-ctrl_held = False
-shift_held = False
-hotkey_listener = None
 last_key_event = time.time()
 
-def on_press(key):
-    global ctrl_held, shift_held, listening, last_key_event
+def is_ctrl_held():
+    """Check if Ctrl key is currently held down."""
+    try:
+        return kb_hook.is_pressed('ctrl')
+    except:
+        return False
+
+def toggle_microphone():
+    """Toggle microphone on/off when Pause key is pressed."""
+    global listening, last_key_event
     last_key_event = time.time()
+    listening = not listening
+    if listening:
+        log("\n*** MIC ON - LISTENING ***\n")
+    else:
+        log("\n*** MIC OFF ***\n")
 
-    if key in (keyboard.Key.ctrl_l, keyboard.Key.ctrl_r):
-        ctrl_held = True
-    elif key in (keyboard.Key.shift_l, keyboard.Key.shift_r, keyboard.Key.shift):
-        shift_held = True
-
-    # Pause key = toggle microphone
-    if key == keyboard.Key.pause:
-        listening = not listening
-        if listening:
-            log("\n*** MIC ON - LISTENING ***\n")
-        else:
-            log("\n*** MIC OFF ***\n")
-
-def on_release(key):
-    global ctrl_held, shift_held, last_key_event
-    last_key_event = time.time()
-
-    if key in (keyboard.Key.ctrl_l, keyboard.Key.ctrl_r):
-        ctrl_held = False
-    elif key in (keyboard.Key.shift_l, keyboard.Key.shift_r, keyboard.Key.shift):
-        shift_held = False
-
-def start_keyboard_listener():
-    """Start or restart the keyboard listener."""
-    global hotkey_listener
-    if hotkey_listener is not None:
-        try:
-            hotkey_listener.stop()
-        except:
-            pass
-    hotkey_listener = Listener(on_press=on_press, on_release=on_release)
-    hotkey_listener.start()
-    return hotkey_listener
+def setup_keyboard_hooks():
+    """Set up keyboard hooks using the keyboard library."""
+    # Hook the Pause key for mic toggle
+    kb_hook.on_press_key('pause', lambda e: toggle_microphone(), suppress=False)
+    log("[KEYBOARD] Hooks registered (using 'keyboard' library)")
 
 # ============================================================
 # MAIN
@@ -701,8 +683,8 @@ log("-"*60)
 log("\n*** LISTENING ***")
 log("(▓ = dictation, ◆ = command mode, ░ = silence)\n")
 
-# Start keyboard listener
-start_keyboard_listener()
+# Set up keyboard hooks (using 'keyboard' library - more reliable than pynput on Windows)
+setup_keyboard_hooks()
 
 record_thread = threading.Thread(target=record_with_vad, daemon=True)
 transcribe_thread = threading.Thread(target=transcribe_worker, daemon=True)
@@ -711,8 +693,6 @@ record_thread.start()
 transcribe_thread.start()
 
 # Watchdog settings
-KEYBOARD_LISTENER_RESTART_INTERVAL = 300  # Restart keyboard listener every 5 minutes
-last_keyboard_restart = time.time()
 last_status_print = time.time()
 STATUS_PRINT_INTERVAL = 60  # Print status every 60 seconds (only when logging enabled)
 
@@ -730,12 +710,6 @@ try:
         if now - last_transcribe_heartbeat > HEARTBEAT_TIMEOUT + 30:  # Extra time for transcription
             log(f"\n[WATCHDOG] Transcription thread may be processing...")
 
-        # Periodically restart keyboard listener to prevent staleness
-        if now - last_keyboard_restart > KEYBOARD_LISTENER_RESTART_INTERVAL:
-            log("\n[MAINTENANCE] Refreshing keyboard listener...")
-            start_keyboard_listener()
-            last_keyboard_restart = now
-
         # Periodic status (only with --log flag, to avoid console spam)
         if args.log and now - last_status_print > STATUS_PRINT_INTERVAL:
             status = "ON" if listening else "OFF"
@@ -746,8 +720,7 @@ except KeyboardInterrupt:
     log("\n\nShutting down...")
     running = False
     listening = False
-    if hotkey_listener:
-        hotkey_listener.stop()
+    kb_hook.unhook_all()  # Clean up keyboard hooks
     record_thread.join(timeout=2)
     transcribe_thread.join(timeout=2)
     if log_file:
