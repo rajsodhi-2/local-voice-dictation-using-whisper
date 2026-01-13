@@ -11,6 +11,7 @@ __pycache__/
 # Temporary files
 temp_vad_chunk.wav
 *.tmp
+tmpclaude-*
 
 # Log files
 dragon_log.txt
