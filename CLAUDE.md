@@ -215,7 +215,8 @@ python dragon_dictate.py --log --logfile my_debug.txt
 - `openai-whisper` - Speech-to-text (small model)
 - `sounddevice` - Audio capture
 - `webrtcvad-wheels` - Voice activity detection
-- `pynput` - Keyboard control and hotkey detection
+- `keyboard` - Hotkey detection (Pause key toggle, Ctrl for commands)
+- `pynput` - Keyboard simulation (typing into active window)
 - `torch` + CUDA - GPU acceleration
 
 ### Audio Hardware
@@ -223,7 +224,7 @@ Configured for PreSonus Studio 1824c audio interface (16kHz sample rate).
 
 ### Settings (tunable in code)
 - `VAD_AGGRESSIVENESS = 2` - How aggressive VAD is (0-3)
-- `SILENCE_FRAMES = 50` - Frames of silence before processing (~1.5 seconds)
+- `SILENCE_FRAMES = 30` - Frames of silence before processing (~0.9 seconds)
 - `MIN_SPEECH_FRAMES = 10` - Minimum speech to transcribe
 - `MAX_RECORDING_SECONDS = 30` - Max chunk length
 
