@@ -64,15 +64,32 @@ MAX_RECORDING_SECONDS = 30
 # APPLICATION PATHS (verified on this system)
 # ============================================================
 APP_PATHS = {
+    # Browsers
     "brave": r"C:\Program Files\BraveSoftware\Brave-Browser\Application\brave.exe",
     "chrome": r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+    "edge": r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
+    "firefox": r"C:\Program Files\Mozilla Firefox\firefox.exe",
+    # Microsoft Office
     "word": r"C:\Program Files\Microsoft Office\root\Office16\WINWORD.EXE",
     "powerpoint": r"C:\Program Files\Microsoft Office\root\Office16\POWERPNT.EXE",
+    "excel": r"C:\Program Files\Microsoft Office\root\Office16\EXCEL.EXE",
+    "onenote": r"C:\Program Files\Microsoft Office\root\Office16\ONENOTE.EXE",
+    "teams": r"C:\Users\raj_s\AppData\Local\Microsoft\Teams\Update.exe",
+    # Dev tools
     "claude": r"C:\Users\raj_s\AppData\Roaming\Microsoft\Windows\Start Menu\Programs\Anthropic\Claude.lnk",
     "terminal": r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe",
-    "explorer": r"C:\Windows\explorer.exe",
     "notepad++": r"C:\Program Files\Notepad++\notepad++.exe",
     "vscode": r"C:\Users\raj_s\AppData\Local\Programs\Microsoft VS Code\Code.exe",
+    # System utilities
+    "explorer": r"C:\Windows\explorer.exe",
+    "calculator": r"C:\Windows\System32\calc.exe",
+    "taskmgr": r"C:\Windows\System32\Taskmgr.exe",
+    "snippingtool": r"C:\Windows\System32\SnippingTool.exe",
+    "settings": "ms-settings:",  # Special URI handler
+    # Communication
+    "discord": r"C:\Users\raj_s\AppData\Local\Discord\Update.exe",
+    "zoom": r"C:\Users\raj_s\AppData\Roaming\Zoom\bin\Zoom.exe",
+    # Media
     "ableton": r"C:\ProgramData\Ableton\Live 11 Suite\Program\Ableton Live 11 Suite.exe",
     "youtube_music": r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge_proxy.exe",
 }
@@ -84,12 +101,26 @@ APP_ALIASES = {
     "chrome": "chrome",
     "google": "chrome",
     "google chrome": "chrome",
-    # Office
+    "edge": "edge",
+    "microsoft edge": "edge",
+    "firefox": "firefox",
+    "mozilla": "firefox",
+    "mozilla firefox": "firefox",
+    # Microsoft Office
     "word": "word",
     "microsoft word": "word",
     "powerpoint": "powerpoint",
     "power point": "powerpoint",
     "ppt": "powerpoint",
+    "excel": "excel",
+    "microsoft excel": "excel",
+    "spreadsheet": "excel",
+    "spreadsheets": "excel",
+    "onenote": "onenote",
+    "one note": "onenote",
+    "microsoft onenote": "onenote",
+    "teams": "teams",
+    "microsoft teams": "teams",
     # Dev tools
     "notepad": "notepad++",
     "notepad++": "notepad++",
@@ -98,22 +129,36 @@ APP_ALIASES = {
     "vscode": "vscode",
     "visual studio code": "vscode",
     "code": "vscode",
-    # Other
     "claude": "claude",
     "cloud": "claude",  # Common mishearing
     "claud": "claude",
     "clawed": "claude",
     "terminal": "terminal",
     "powershell": "terminal",
+    # System utilities
     "explorer": "explorer",
     "file explorer": "explorer",
     "windows explorer": "explorer",
     "files": "explorer",
     "folder": "explorer",
     "folders": "explorer",
+    "calculator": "calculator",
+    "calc": "calculator",
+    "task manager": "taskmgr",
+    "taskmgr": "taskmgr",
+    "snipping tool": "snippingtool",
+    "snip": "snippingtool",
+    "screenshot": "snippingtool",
+    "screen shot": "snippingtool",
+    "settings": "settings",
+    "windows settings": "settings",
+    # Communication
+    "discord": "discord",
+    "zoom": "zoom",
+    "zoom meeting": "zoom",
+    # Media
     "ableton": "ableton",
     "live": "ableton",
-    # Music
     "youtube music": "youtube_music",
     "youtube": "youtube_music",
     "music": "youtube_music",
@@ -126,6 +171,13 @@ def launch_app(app_key):
         return False
 
     path = APP_PATHS[app_key]
+
+    # Special cases that don't need path existence check
+    if app_key == "settings":
+        log(f"[CMD] Launching {app_key}...")
+        os.startfile(path)  # ms-settings: URI
+        return True
+
     if not os.path.exists(path):
         log(f"[CMD] App not found: {path}")
         return False
@@ -150,6 +202,12 @@ def launch_app(app_key):
                 "--app-url=https://music.youtube.com/?source=pwa",
                 "--app-launch-source=4"
             ])
+        elif app_key == "teams":
+            # Teams uses Update.exe with --processStart
+            subprocess.Popen([path, "--processStart", "Teams.exe"])
+        elif app_key == "discord":
+            # Discord uses Update.exe with --processStart
+            subprocess.Popen([path, "--processStart", "Discord.exe"])
         else:
             subprocess.Popen([path])
         return True
@@ -286,6 +344,12 @@ running = True
 audio_queue = queue.Queue()
 last_transcription = ""  # For context-aware transcription
 
+# Health monitoring
+last_record_heartbeat = time.time()
+last_transcribe_heartbeat = time.time()
+HEARTBEAT_TIMEOUT = 10  # seconds before considering thread stuck
+AUDIO_DEVICE_CHECK_INTERVAL = 30  # Check audio device health periodically
+
 # Word replacements (post-transcription corrections)
 # Add your domain-specific terms here
 WORD_REPLACEMENTS = {
@@ -366,9 +430,15 @@ def type_text(text, is_continuation=False):
 # ============================================================
 def record_with_vad():
     """Record audio, using VAD to detect speech boundaries."""
-    global listening, running, ctrl_held
+    global listening, running, ctrl_held, last_record_heartbeat
+
+    consecutive_errors = 0
+    MAX_CONSECUTIVE_ERRORS = 5
 
     while running:
+        # Update heartbeat even when not listening
+        last_record_heartbeat = time.time()
+
         if not listening:
             time.sleep(0.1)
             continue
@@ -378,83 +448,134 @@ def record_with_vad():
         silence_frames = 0
         is_speech = False
         was_command_mode = False
+        stream = None
 
         try:
-            with sd.InputStream(samplerate=SAMPLE_RATE,
-                               channels=1,
-                               dtype='int16',
-                               blocksize=FRAME_SIZE) as stream:
+            # Use callback-based streaming for more reliable audio capture
+            audio_buffer = queue.Queue()
 
-                while running and listening:
-                    frame, _ = stream.read(FRAME_SIZE)
-                    frame_bytes = frame.tobytes()
+            def audio_callback(indata, frames_count, time_info, status):
+                if status:
+                    log(f"\n[AUDIO STATUS] {status}")
+                audio_buffer.put(indata.copy())
 
-                    try:
-                        frame_is_speech = vad.is_speech(frame_bytes, SAMPLE_RATE)
-                    except:
-                        frame_is_speech = False
+            stream = sd.InputStream(
+                samplerate=SAMPLE_RATE,
+                channels=1,
+                dtype='int16',
+                blocksize=FRAME_SIZE,
+                callback=audio_callback
+            )
+            stream.start()
+            consecutive_errors = 0  # Reset on successful open
 
-                    if frame_is_speech:
-                        if not is_speech:
-                            was_command_mode = ctrl_held
-                            if was_command_mode:
-                                sys.stdout.write("[CMD] ")
+            while running and listening:
+                last_record_heartbeat = time.time()
 
-                        is_speech = True
-                        speech_frames += 1
-                        silence_frames = 0
+                try:
+                    # Non-blocking get with timeout - prevents hanging
+                    frame = audio_buffer.get(timeout=0.5)
+                except queue.Empty:
+                    # No audio data received - check if stream is still alive
+                    if stream.active:
+                        continue
+                    else:
+                        log("\n[WARN] Audio stream became inactive, restarting...")
+                        break
+
+                frame_bytes = frame.tobytes()
+
+                try:
+                    frame_is_speech = vad.is_speech(frame_bytes, SAMPLE_RATE)
+                except:
+                    frame_is_speech = False
+
+                if frame_is_speech:
+                    if not is_speech:
+                        was_command_mode = ctrl_held
+                        if was_command_mode:
+                            sys.stdout.write("[CMD] ")
+
+                    is_speech = True
+                    speech_frames += 1
+                    silence_frames = 0
+                    frames.append(frame)
+
+                    if was_command_mode:
+                        sys.stdout.write("◆")
+                    else:
+                        sys.stdout.write("▓")
+                    sys.stdout.flush()
+                else:
+                    if is_speech:
+                        silence_frames += 1
                         frames.append(frame)
 
-                        if was_command_mode:
-                            sys.stdout.write("◆")
-                        else:
-                            sys.stdout.write("▓")
+                        sys.stdout.write("░")
                         sys.stdout.flush()
-                    else:
-                        if is_speech:
-                            silence_frames += 1
-                            frames.append(frame)
 
-                            sys.stdout.write("░")
-                            sys.stdout.flush()
+                        if silence_frames >= SILENCE_FRAMES:
+                            if speech_frames >= MIN_SPEECH_FRAMES:
+                                audio_data = np.concatenate(frames)
+                                audio_queue.put((audio_data, was_command_mode))
+                                print()
 
-                            if silence_frames >= SILENCE_FRAMES:
-                                if speech_frames >= MIN_SPEECH_FRAMES:
-                                    audio_data = np.concatenate(frames)
-                                    audio_queue.put((audio_data, was_command_mode))
-                                    print()
+                            frames = []
+                            speech_frames = 0
+                            silence_frames = 0
+                            is_speech = False
+                            was_command_mode = False
 
-                                frames = []
-                                speech_frames = 0
-                                silence_frames = 0
-                                is_speech = False
-                                was_command_mode = False
+                if len(frames) > MAX_RECORDING_SECONDS * SAMPLE_RATE / FRAME_SIZE:
+                    if speech_frames >= MIN_SPEECH_FRAMES:
+                        audio_data = np.concatenate(frames)
+                        audio_queue.put((audio_data, was_command_mode))
+                        print()
+                    frames = []
+                    speech_frames = 0
+                    silence_frames = 0
+                    is_speech = False
+                    was_command_mode = False
 
-                    if len(frames) > MAX_RECORDING_SECONDS * SAMPLE_RATE / FRAME_SIZE:
-                        if speech_frames >= MIN_SPEECH_FRAMES:
-                            audio_data = np.concatenate(frames)
-                            audio_queue.put((audio_data, was_command_mode))
-                            print()
-                        frames = []
-                        speech_frames = 0
-                        silence_frames = 0
-                        is_speech = False
-                        was_command_mode = False
-
-        except Exception as e:
+        except sd.PortAudioError as e:
+            consecutive_errors += 1
             if running:
-                log(f"\nRecording error: {e}")
-            time.sleep(0.5)
+                log(f"\n[AUDIO ERROR] PortAudio: {e} (attempt {consecutive_errors}/{MAX_CONSECUTIVE_ERRORS})")
+            if consecutive_errors >= MAX_CONSECUTIVE_ERRORS:
+                log("\n[FATAL] Too many audio errors, waiting longer before retry...")
+                time.sleep(5)
+                consecutive_errors = 0
+            else:
+                time.sleep(1)
+        except Exception as e:
+            consecutive_errors += 1
+            if running:
+                log(f"\n[AUDIO ERROR] {type(e).__name__}: {e} (attempt {consecutive_errors}/{MAX_CONSECUTIVE_ERRORS})")
+            if consecutive_errors >= MAX_CONSECUTIVE_ERRORS:
+                log("\n[FATAL] Too many audio errors, waiting longer before retry...")
+                time.sleep(5)
+                consecutive_errors = 0
+            else:
+                time.sleep(0.5)
+        finally:
+            # Always clean up the stream
+            if stream is not None:
+                try:
+                    stream.stop()
+                    stream.close()
+                except:
+                    pass
 
 # ============================================================
 # TRANSCRIPTION WORKER
 # ============================================================
 def transcribe_worker():
     """Transcribe audio and either type or execute command."""
-    global running, last_transcription
+    global running, last_transcription, last_transcribe_heartbeat
     temp_file = "temp_vad_chunk.wav"
 
     while running:
+        last_transcribe_heartbeat = time.time()
         try:
             item = audio_queue.get(timeout=1)
             audio, is_command = item
@@ -501,7 +622,7 @@ def transcribe_worker():
             continue
         except Exception as e:
             if running:
-                log(f"\nTranscription error: {e}")
+                log(f"\n[TRANSCRIBE ERROR] {type(e).__name__}: {e}")
 
     if os.path.exists(temp_file):
         os.remove(temp_file)
@@ -511,9 +632,13 @@ def transcribe_worker():
 # ============================================================
 ctrl_held = False
 shift_held = False
+hotkey_listener = None
+last_key_event = time.time()
 
 def on_press(key):
-    global ctrl_held, shift_held, listening
+    global ctrl_held, shift_held, listening, last_key_event
+    last_key_event = time.time()
+
     if key in (keyboard.Key.ctrl_l, keyboard.Key.ctrl_r):
         ctrl_held = True
     elif key in (keyboard.Key.shift_l, keyboard.Key.shift_r, keyboard.Key.shift):
@@ -528,11 +653,25 @@ def on_press(key):
             log("\n*** MIC OFF ***\n")
 
 def on_release(key):
-    global ctrl_held, shift_held
+    global ctrl_held, shift_held, last_key_event
+    last_key_event = time.time()
+
     if key in (keyboard.Key.ctrl_l, keyboard.Key.ctrl_r):
         ctrl_held = False
     elif key in (keyboard.Key.shift_l, keyboard.Key.shift_r, keyboard.Key.shift):
         shift_held = False
+
+def start_keyboard_listener():
+    """Start or restart the keyboard listener."""
+    global hotkey_listener
+    if hotkey_listener is not None:
+        try:
+            hotkey_listener.stop()
+        except:
+            pass
+    hotkey_listener = Listener(on_press=on_press, on_release=on_release)
+    hotkey_listener.start()
+    return hotkey_listener
 
 # ============================================================
 # MAIN
@@ -547,10 +686,12 @@ log("  Pause key = Toggle microphone on/off")
 log("  Ctrl+C    = Quit (in terminal)")
 log("-"*60)
 log("\nAPP COMMANDS (hold Ctrl + speak):")
-log("  'open brave'      'open chrome'       'open word'")
-log("  'open powerpoint' 'open claude'       'open terminal'")
-log("  'open explorer'   'open notepad'      'open vs code'")
-log("  'open ableton'    'open youtube music'")
+log("  Browsers:    brave, chrome, edge, firefox")
+log("  Office:      word, excel, powerpoint, onenote, teams")
+log("  Dev:         vs code, notepad, claude, terminal")
+log("  Utils:       explorer, calculator, settings, task manager, snipping tool")
+log("  Comms:       discord, zoom")
+log("  Media:       ableton, youtube music")
 log("\nKEYSTROKE COMMANDS (Ctrl + speak):")
 log("  'new tab'    'close tab'    'close window'   'save'")
 log("  'undo'       'redo'         'copy'           'paste'")
@@ -560,8 +701,8 @@ log("-"*60)
 log("\n*** LISTENING ***")
 log("(▓ = dictation, ◆ = command mode, ░ = silence)\n")
 
-hotkey_listener = Listener(on_press=on_press, on_release=on_release)
-hotkey_listener.start()
+# Start keyboard listener
+start_keyboard_listener()
 
 record_thread = threading.Thread(target=record_with_vad, daemon=True)
 transcribe_thread = threading.Thread(target=transcribe_worker, daemon=True)
@@ -569,14 +710,44 @@ transcribe_thread = threading.Thread(target=transcribe_worker, daemon=True)
 record_thread.start()
 transcribe_thread.start()
 
+# Watchdog settings
+KEYBOARD_LISTENER_RESTART_INTERVAL = 300  # Restart keyboard listener every 5 minutes
+last_keyboard_restart = time.time()
+last_status_print = time.time()
+STATUS_PRINT_INTERVAL = 60  # Print status every 60 seconds (only when logging enabled)
+
 try:
     while True:
-        time.sleep(0.1)
+        time.sleep(1)
+
+        now = time.time()
+
+        # Watchdog: Check if threads are responsive
+        if now - last_record_heartbeat > HEARTBEAT_TIMEOUT:
+            log(f"\n[WATCHDOG] Recording thread unresponsive for {HEARTBEAT_TIMEOUT}s")
+            # Thread will auto-recover due to timeout-based design
+
+        if now - last_transcribe_heartbeat > HEARTBEAT_TIMEOUT + 30:  # Extra time for transcription
+            log(f"\n[WATCHDOG] Transcription thread may be processing...")
+
+        # Periodically restart keyboard listener to prevent staleness
+        if now - last_keyboard_restart > KEYBOARD_LISTENER_RESTART_INTERVAL:
+            log("\n[MAINTENANCE] Refreshing keyboard listener...")
+            start_keyboard_listener()
+            last_keyboard_restart = now
+
+        # Periodic status (only with --log flag, to avoid console spam)
+        if args.log and now - last_status_print > STATUS_PRINT_INTERVAL:
+            status = "ON" if listening else "OFF"
+            log(f"\n[STATUS] Mic: {status} | Record: {int(now - last_record_heartbeat)}s ago | Transcribe: {int(now - last_transcribe_heartbeat)}s ago")
+            last_status_print = now
+
 except KeyboardInterrupt:
     log("\n\nShutting down...")
     running = False
     listening = False
-    hotkey_listener.stop()
+    if hotkey_listener:
+        hotkey_listener.stop()
     record_thread.join(timeout=2)
     transcribe_thread.join(timeout=2)
     if log_file:
