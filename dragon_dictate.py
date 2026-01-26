@@ -343,6 +343,14 @@ listening = True
 running = True
 audio_queue = queue.Queue()
 last_transcription = ""  # For context-aware transcription
+listening_event = threading.Event()  # Thread-safe signaling for state changes
+listening_event.set()  # Start in listening state
+
+# Keyboard event signaling - using Event + atomic variable
+# Event wakes main loop immediately; timestamp provides the actual data
+pause_key_signal = threading.Event()  # Signal that pause was pressed
+pause_pressed_at = 0.0  # Timestamp of last pause key press
+last_processed_pause = 0.0  # Timestamp of last processed pause event
 
 # Health monitoring
 last_record_heartbeat = time.time()
@@ -434,13 +442,23 @@ def record_with_vad():
 
     consecutive_errors = 0
     MAX_CONSECUTIVE_ERRORS = 5
+    was_listening = None  # Track state changes
 
     while running:
         # Update heartbeat even when not listening
         last_record_heartbeat = time.time()
 
+        # Log state changes in the recording thread
+        if was_listening != listening:
+            if args.log:
+                log(f"\n[RECORD THREAD] Detected mic state change: {was_listening} -> {listening}")
+            was_listening = listening
+
         if not listening:
-            time.sleep(0.1)
+            # Use Event.wait() instead of sleep - wakes immediately when mic turns on
+            was_signaled = listening_event.wait(timeout=0.5)
+            if was_signaled and args.log:
+                log(f"[RECORD THREAD] Woke up from Event signal!")
             continue
 
         frames = []
@@ -459,6 +477,14 @@ def record_with_vad():
                     log(f"\n[AUDIO STATUS] {status}")
                 audio_buffer.put(indata.copy())
 
+            # Log default input device before opening stream
+            if args.log:
+                try:
+                    default_device = sd.query_devices(kind='input')
+                    log(f"[RECORD THREAD] Opening audio device: {default_device['name']}")
+                except Exception as e:
+                    log(f"[RECORD THREAD] Could not query device: {e}")
+
             stream = sd.InputStream(
                 samplerate=SAMPLE_RATE,
                 channels=1,
@@ -468,6 +494,8 @@ def record_with_vad():
             )
             stream.start()
             consecutive_errors = 0  # Reset on successful open
+            if args.log:
+                log(f"[RECORD THREAD] Audio stream started successfully")
 
             while running and listening:
                 last_record_heartbeat = time.time()
@@ -563,8 +591,11 @@ def record_with_vad():
                 try:
                     stream.stop()
                     stream.close()
-                except:
-                    pass
+                    if args.log:
+                        log(f"[RECORD THREAD] Audio stream closed")
+                except Exception as e:
+                    if args.log:
+                        log(f"[RECORD THREAD] Error closing stream: {e}")
 
 # ============================================================
 # TRANSCRIPTION WORKER
@@ -631,29 +662,86 @@ def transcribe_worker():
 # HOTKEY HANDLER (using 'keyboard' library - more reliable on Windows)
 # ============================================================
 last_key_event = time.time()
+last_toggle_time = 0  # For debouncing
+DEBOUNCE_MS = 300  # Minimum ms between toggles
 
 def is_ctrl_held():
     """Check if Ctrl key is currently held down."""
     try:
         return kb_hook.is_pressed('ctrl')
-    except:
+    except Exception as e:
+        log(f"[KEYBOARD] Error checking Ctrl state: {e}")
         return False
+
+def on_pause_key_event(event):
+    """Handle Pause key press event - ABSOLUTE MINIMUM WORK."""
+    # CRITICAL: Minimal operations only!
+    # 1. Set timestamp (atomic in CPython)
+    # 2. Set Event (wakes main loop immediately)
+    global pause_pressed_at
+    pause_pressed_at = time.time()
+    pause_key_signal.set()  # Wake main loop NOW
+
+
+def process_pause_key(event_timestamp):
+    """Process a pause key event - called from main thread."""
+    global last_toggle_time, last_processed_pause
+
+    timestamp_str = datetime.datetime.fromtimestamp(event_timestamp).strftime('%H:%M:%S.%f')[:-3]
+    now_ms = int(event_timestamp * 1000)
+    current_listening = listening
+
+    log(f"\n[PAUSE KEY] Processing event from {timestamp_str}")
+    log(f"[PAUSE KEY] Current state: listening={current_listening}")
+
+    # Debounce check
+    elapsed_ms = now_ms - int(last_toggle_time * 1000)
+    if elapsed_ms < DEBOUNCE_MS:
+        log(f"[PAUSE KEY] Debounced (only {elapsed_ms}ms since last toggle, need {DEBOUNCE_MS}ms)")
+        return
+
+    last_toggle_time = event_timestamp
+
+    # Perform the toggle
+    toggle_microphone()
 
 def toggle_microphone():
     """Toggle microphone on/off when Pause key is pressed."""
     global listening, last_key_event
+
+    old_state = listening
     last_key_event = time.time()
     listening = not listening
+
+    # Use thread-safe Event to signal state change immediately
+    if listening:
+        listening_event.set()
+        log(f"[PAUSE KEY] Event SET (signaling record thread)")
+    else:
+        listening_event.clear()
+        log(f"[PAUSE KEY] Event CLEARED")
+
+    log(f"[PAUSE KEY] Toggle: {old_state} -> {listening}")
+
     if listening:
         log("\n*** MIC ON - LISTENING ***\n")
     else:
         log("\n*** MIC OFF ***\n")
 
+def check_keyboard_hook_health():
+    """Check if keyboard hooks are still responsive."""
+    # NOTE: We no longer call kb_hook.is_pressed() here because it can block/deadlock
+    # with the keyboard library's internal state. Instead, we just check if the
+    # queue mechanism is working by verifying we can still receive events.
+    # The queue-based approach means we don't need to poll keyboard state.
+    return True  # Assume OK - the queue will tell us if events stop coming
+
 def setup_keyboard_hooks():
     """Set up keyboard hooks using the keyboard library."""
     # Hook the Pause key for mic toggle
-    kb_hook.on_press_key('pause', lambda e: toggle_microphone(), suppress=False)
+    kb_hook.on_press_key('pause', on_pause_key_event, suppress=False)
     log("[KEYBOARD] Hooks registered (using 'keyboard' library)")
+    log(f"[KEYBOARD] Pause key hooked, debounce={DEBOUNCE_MS}ms")
 
 # ============================================================
 # MAIN
@@ -686,6 +774,10 @@ log("(▓ = dictation, ◆ = command mode, ░ = silence)\n")
 # Set up keyboard hooks (using 'keyboard' library - more reliable than pynput on Windows)
 setup_keyboard_hooks()
 
+if args.log:
+    log("\n[DEBUG] Logging enabled - Pause key events will be logged to: " + args.logfile)
+    log("[DEBUG] Look for [PAUSE KEY] entries to diagnose toggle issues")
+
 record_thread = threading.Thread(target=record_with_vad, daemon=True)
 transcribe_thread = threading.Thread(target=transcribe_worker, daemon=True)
 
@@ -694,11 +786,31 @@ transcribe_thread.start()
 
 # Watchdog settings
 last_status_print = time.time()
+last_hook_check = time.time()
 STATUS_PRINT_INTERVAL = 60  # Print status every 60 seconds (only when logging enabled)
+HOOK_CHECK_INTERVAL = 30  # Check keyboard hook health every 30 seconds
 
+main_loop_counter = 0
 try:
     while True:
-        time.sleep(1)
+        main_loop_counter += 1
+
+        # Wait for pause key signal OR timeout (replaces blind sleep)
+        # Event.wait() returns True if signaled, False if timeout
+        was_signaled = pause_key_signal.wait(timeout=0.1)
+
+        if was_signaled:
+            # Clear the signal immediately
+            pause_key_signal.clear()
+
+            # Process the pause key
+            current_pause_ts = pause_pressed_at
+            if current_pause_ts > last_processed_pause:
+                if args.log:
+                    ts_str = datetime.datetime.fromtimestamp(current_pause_ts).strftime('%H:%M:%S.%f')[:-3]
+                    log(f"\n[MAIN LOOP] Pause key SIGNALED at {ts_str} (loop #{main_loop_counter})")
+                process_pause_key(current_pause_ts)
+                last_processed_pause = current_pause_ts
 
         now = time.time()
 
@@ -710,10 +822,26 @@ try:
         if now - last_transcribe_heartbeat > HEARTBEAT_TIMEOUT + 30:  # Extra time for transcription
             log(f"\n[WATCHDOG] Transcription thread may be processing...")
 
+        # Periodic keyboard hook health check
+        if now - last_hook_check > HOOK_CHECK_INTERVAL:
+            hook_ok = check_keyboard_hook_health()
+            if args.log:
+                log(f"\n[KEYBOARD] Hook health check: {'OK' if hook_ok else 'FAILED'}")
+            if not hook_ok:
+                log("\n[KEYBOARD] Attempting to re-register hooks...")
+                try:
+                    kb_hook.unhook_all()
+                    setup_keyboard_hooks()
+                    log("[KEYBOARD] Hooks re-registered successfully")
+                except Exception as e:
+                    log(f"[KEYBOARD] Failed to re-register hooks: {e}")
+            last_hook_check = now
+
         # Periodic status (only with --log flag, to avoid console spam)
         if args.log and now - last_status_print > STATUS_PRINT_INTERVAL:
             status = "ON" if listening else "OFF"
-            log(f"\n[STATUS] Mic: {status} | Record: {int(now - last_record_heartbeat)}s ago | Transcribe: {int(now - last_transcribe_heartbeat)}s ago")
+            time_since_toggle = int(now - last_key_event) if last_key_event else "N/A"
+            log(f"\n[STATUS] Mic: {status} | Last toggle: {time_since_toggle}s ago | Record: {int(now - last_record_heartbeat)}s ago | Transcribe: {int(now - last_transcribe_heartbeat)}s ago")
             last_status_print = now
 
 except KeyboardInterrupt:

@@ -256,3 +256,33 @@ The system handles common mishearings and variations:
 ### Sentence Continuation
 These words trigger continuation detection (removes previous period):
 `and`, `or`, `but`, `which`, `that`, `enabling`, `allowing`, `including`, etc.
+
+### Technical Architecture Notes
+
+**Keyboard Hook Threading (Critical):**
+The `keyboard` library uses Windows low-level hooks (`SetWindowsHookEx`) that run in a dedicated thread with strict timing requirements. The Pause key toggle uses a carefully designed pattern:
+
+1. **Callback must be minimal** - The `on_pause_key_event` callback does only two things:
+   - Set an atomic timestamp: `pause_pressed_at = time.time()`
+   - Signal an Event: `pause_key_signal.set()`
+
+2. **NO blocking operations in callback** - Any of these in the callback can cause deadlocks:
+   - Logging/file I/O
+   - `queue.Queue.put()` (uses internal locks)
+   - Accessing complex event properties
+   - Any function that might block
+
+3. **Main loop uses Event.wait()** - Instead of polling with `time.sleep()`, the main loop waits on `pause_key_signal.wait(timeout=0.1)`. This:
+   - Wakes immediately when signaled (kernel-level notification)
+   - Forces memory barriers (ensures cross-CPU cache coherency)
+   - Works reliably even under system load (video playback, etc.)
+
+**Why this matters:** Video playback, audio processing, and other multimedia apps consume system resources and affect Python's thread scheduling. Simple variable polling may not see updates due to CPU cache issues. `threading.Event` uses OS primitives that guarantee visibility.
+
+**Thread communication pattern:**
+```
+[keyboard hook thread]  -->  pause_key_signal.set()  -->  [main thread wakes]
+                        -->  pause_pressed_at = ts   -->  [main thread reads ts]
+```
+
+**Record thread signaling:** Uses the same `threading.Event` pattern (`listening_event`) to wake immediately when mic is toggled on, rather than waiting for sleep timeout.
