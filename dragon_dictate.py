@@ -730,11 +730,10 @@ def toggle_microphone():
 
 def check_keyboard_hook_health():
     """Check if keyboard hooks are still responsive."""
-    # NOTE: We no longer call kb_hook.is_pressed() here because it can block/deadlock
-    # with the keyboard library's internal state. Instead, we just check if the
-    # queue mechanism is working by verifying we can still receive events.
-    # The queue-based approach means we don't need to poll keyboard state.
-    return True  # Assume OK - the queue will tell us if events stop coming
+    # NOTE: We cannot call kb_hook.is_pressed() here because it can block/deadlock
+    # with the keyboard library's internal state. The Event-based signaling approach
+    # means we rely on pause_key_signal to detect if hooks are still working.
+    return True  # Cannot safely probe keyboard library state
 
 def setup_keyboard_hooks():
     """Set up keyboard hooks using the keyboard library."""
@@ -800,11 +799,9 @@ try:
         was_signaled = pause_key_signal.wait(timeout=0.1)
 
         if was_signaled:
-            # Clear the signal immediately
-            pause_key_signal.clear()
-
-            # Process the pause key
+            # Read timestamp BEFORE clearing (prevents race with second key press)
             current_pause_ts = pause_pressed_at
+            pause_key_signal.clear()
             if current_pause_ts > last_processed_pause:
                 if args.log:
                     ts_str = datetime.datetime.fromtimestamp(current_pause_ts).strftime('%H:%M:%S.%f')[:-3]
